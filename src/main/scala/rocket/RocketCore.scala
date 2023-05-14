@@ -29,6 +29,7 @@ case class RocketCoreParams(
   useBitManipCrypto: Boolean = false,
   useCryptoNIST: Boolean = false,
   useCryptoSM: Boolean = false,
+  useConditionalZero: Boolean = false,
   nLocalInterrupts: Int = 0,
   useNMI: Boolean = false,
   nBreakpoints: Int = 1,
@@ -52,7 +53,8 @@ case class RocketCoreParams(
   mvendorid: Int = 0, // 0 means non-commercial implementation
   mimpid: Int = 0x20181004, // release date in BCD
   mulDiv: Option[MulDivParams] = Some(MulDivParams()),
-  fpu: Option[FPUParams] = Some(FPUParams())
+  fpu: Option[FPUParams] = Some(FPUParams()),
+  haveCease: Boolean = true // non-standard CEASE instruction
 ) extends CoreParams {
   val lgPauseCycles = 5
   val haveFSDirty = false
@@ -64,7 +66,7 @@ case class RocketCoreParams(
   val instBits: Int = if (useCompressed) 16 else 32
   val lrscCycles: Int = 80 // worst case is 14 mispredicted branches + slop
   val traceHasWdata: Boolean = false // ooo wb, so no wdata in trace
-  override val customIsaExt = Some("Xrocket") // CEASE instruction
+  override val customIsaExt = Option.when(haveCease)("xrocket") // CEASE instruction
   override def minFLen: Int = fpu.map(_.minFLen).getOrElse(32)
   override def customCSRs(implicit p: Parameters) = new RocketCustomCSRs
 }
@@ -82,6 +84,7 @@ trait HasRocketCoreParameters extends HasCoreParameters {
 
   require(!fastLoadByte || fastLoadWord)
   require(!rocketParams.haveFSDirty, "rocket doesn't support setting fs dirty from outside, please disable haveFSDirty")
+  require(!(usingABLU && usingConditionalZero), "Zicond is not yet implemented in ABLU")
 }
 
 class RocketCustomCSRs(implicit p: Parameters) extends CustomCSRs with HasRocketCoreParameters {
@@ -202,8 +205,10 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
     ((usingHypervisor && (xLen == 64)).option(new Hypervisor64Decode(aluFn))) ++:
     (usingDebug.option(new DebugDecode(aluFn))) ++:
     (usingNMI.option(new NMIDecode(aluFn))) ++:
+    (usingConditionalZero.option(new ConditionalZeroDecode(aluFn))) ++:
     Seq(new FenceIDecode(tile.dcache.flushOnFenceI, aluFn)) ++:
     coreParams.haveCFlush.option(new CFlushDecode(tile.dcache.canSupportCFlushLine, aluFn)) ++:
+    rocketParams.haveCease.option(new CeaseDecode(aluFn)) ++:
     Seq(new IDecode(aluFn))
   } flatMap(_.table)
 
@@ -807,7 +812,8 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
   csr.io.rw.addr := wb_reg_inst(31,20)
   csr.io.rw.cmd := CSR.maskCmd(wb_reg_valid, wb_ctrl.csr)
   csr.io.rw.wdata := wb_reg_wdata
-  io.trace := csr.io.trace
+  io.trace.insns := csr.io.trace
+  io.trace.time := csr.io.time
   for (((iobpw, wphit), bp) <- io.bpwatch zip wb_reg_wphit zip csr.io.bp) {
     iobpw.valid(0) := wphit
     iobpw.action := bp.control.action
