@@ -2,6 +2,7 @@
 *.o
 *.a
 *.log
+*.vcd
 output/
 emulator-*
 generated-src
