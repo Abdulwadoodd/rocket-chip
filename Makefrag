@@ -3,10 +3,11 @@ ifndef RISCV
 $(error Please set environment variable RISCV. Please take a look at README)
 endif
 
+CONFIG_TYPE ?= DefaultConfig
 MODEL ?= TestHarness
 PROJECT ?= freechips.rocketchip.system
 CFG_PROJECT ?= $(PROJECT)
-CONFIG ?= $(CFG_PROJECT).DefaultConfig
+CONFIG ?= $(CFG_PROJECT).$(CONFIG_TYPE)
 # TODO: For now must match rocketchip.Generator
 comma := ,
 space := $() $()
